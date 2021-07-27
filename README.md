@@ -1,3 +1,4 @@
 # tradelog
-language bash
+language bash.
+
 This is my first project in linux.
