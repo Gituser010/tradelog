@@ -1,0 +1,380 @@
+#!/bin/bash
+#definition of function if no arhuments and commands are set
+cmd="cat"
+arguments[0]="cat"
+arg_n=1
+
+#write help on stdout
+function help(){
+	echo "comands"
+	echo '--------------------------------------------'
+	echo 'list-tick	list of tickers'
+	echo "profit profit from closed positions"
+	echo 'pos  values of positons'
+	echo "last-price last prices of tickers"
+	echo "hist-ord show histogram of transations"
+	echo
+	echo "filters"
+	echo "--------------------------------------------"
+	echo "-a DATETIME	--> logs after date (YYYY-MM-DD HH:MM:SS)"
+	echo "-b DATETIME	--> logs before date (YYYY-MM-DD HH:MM:SS)"
+	echo '-t TICKER		--> logs with $TICKER'
+      	exec echo '-w WIDTH		--> set $WIDTG of graph'	
+	
+}
+
+#funkction find out if file does exit
+file_n=0
+function findf(){
+	if [ -r $1 ];then
+		file[$file_n]="$1"
+		(( file_n++ ))
+	else
+		exec echo "error: file $1 does not exist" >&2
+	fi
+}
+
+#funkction is trying to add cmd
+function addcmd(){
+	if [ "$cmd"  =  "cat" ];then
+	cmd="$1 | $2"
+	else
+		exec echo error: max 1 command
+	fi
+}
+
+#function add arguments into pipe
+function addarg(){
+	if [ -n "$arguments" ];then
+		arguments[$arg_n]=" | $1 $2"
+		(( arg_n++ ))
+	else
+		
+		arguments[$arg_n]="$1 $2"
+		(( arg_n++ ))
+	fi
+}
+
+#function add ticker into tickers field
+function addticker(){
+	if [ -z "$tickers" ];then
+		addarg $1
+	fi
+		tickers[$tick_n]="$2"
+		(( tick_n++ ))
+} 
+
+#cycle is proccessing input parameters
+while [ $# -ge 1 ];
+do
+	case $1 in
+		"-h"|"--help")
+			help
+			;;
+		"list-tick")
+			addcmd tick "sort"
+			;;
+		"profit")
+			addcmd profit "sort"
+			;;
+		"pos")
+			addcmd pos "sort -t: -k2 -h -r"
+			;;
+		"last-price")
+			addcmd price "sort"
+			;;
+		"hist-ord")
+			addcmd hist "sort"
+			;;
+		"graph-pos")
+			addcmd graph "sort"
+			;;
+		"-a")
+			addarg a "$2 $3" 
+			shift 2
+			;;
+		"-b")
+			addarg b "$2 $3"
+			shift 2
+			;;
+		"-t")
+			addticker t $2 
+			shift
+			;;
+		"-w")
+			width=$2
+			shift
+			;;
+		*.gz)
+			if [ -f $1 ]
+			then
+				gz="zcat $1"
+			else
+				exec echo "error:file $1 does not exist"
+			fi
+			;;
+		*)
+			findf $1 
+			;;
+	esac
+	shift
+done
+       
+IFS=";"
+if [ -n "$file" ]
+then
+exec < ${file[0]}
+fi
+
+#function filer dates greater than date $1 $2
+function a(){
+	while read date others
+	do
+		date_n=$(date --date="$date" +%s)
+		input=$(date --date="$1 $2" +%s)
+		
+		if [  $date_n  -gt  $input ];
+		then
+			echo "$date;$others"
+		fi
+		
+	done
+}
+
+#function filter dates loewr than date $1 $2
+function b(){
+	while read date others
+	do		
+		date_n=$(date --date="$date" +%s)	
+		input=$(date --date="$1 $2" +%s)
+		
+		if [ $input -gt $date_n ];
+		then
+			echo "$date;$others"
+		fi
+	done
+}
+
+#function push on the output just tickers which was entered on input
+function t(){
+	while read date ticker others
+	do
+		for i in ${tickers[*]}
+		do
+			if [ "$i" = "$ticker" ]
+			then
+				echo "$date;$ticker;$others"
+			fi
+		done
+	done
+}
+
+#function write on ouput all tickers 
+function tick(){
+	while read date ticker others
+	do
+		if [ -z $(eval echo '$'$ticker) ]
+		then	
+			eval $ticker=1
+			echo $ticker
+		fi	
+	done
+}
+
+
+#function calculate total profit
+function profit(){
+	profit=0
+	while read date ticker type price curr vol ID
+	do
+		if [ "$ID" != "" ]
+		then
+			if [ "$type" = "buy" ]
+			then
+				profit=`echo "a=$price;b=$vol;c=$profit;c-a*b" | bc`
+			else	
+				profit=`echo "a=$price;b=$vol;c=$profit;c+a*b" | bc`
+			fi
+		fi
+	done
+	echo $profit
+}
+
+
+export max=0
+#firs cycle create the list of tickers then calculate the number of postion holded
+#second cycle findout max number 
+#third cycle write out positons holdede for all tickers
+function pos(){
+	while read date tick type price curr vol ID
+	do
+		if [ "$ID" != "" ]
+		then
+			if [ -z "$(eval echo '$'$tick)" ]
+			then 
+				eval $tick=0
+				list+=($tick)
+			fi
+			if [ "$type" = "buy" ];then
+				eval $tick=`echo "a=$(eval echo '${'$tick'[0]}');b=$vol;a+b" | bc`	
+			else 
+				eval $tick=`echo "a=$(eval echo '${'$tick'[0]}');b=$vol;a-b" | bc` 
+			fi
+
+			eval $tick[1]=$price
+		fi	
+	done
+	for i in ${list[*]}
+	do
+		eval $i=`echo "a=$(eval echo '${'$i'[0]}');b=$(eval echo '${'$i'[1]}');a*b" | bc`
+		if [ $(eval echo '${#'$i'}') -gt ${#max} ]
+		then
+			max="$(eval echo '$'$i)"
+		fi
+	done	
+	for i in ${list[*]}
+	do
+		printf  "%-10s%s %${#max}s\n" "$i" ":"  "$(eval echo '$'$i)"
+	done
+
+	
+}
+#function in first cycle create the list of tickers and findout max price
+#then function write out the prices formated to right
+function price(){
+	while read date tick type price curr vol ID
+	do
+		if [ "$ID" != "" ]
+		then
+			if [ -z "$(eval echo '$'$tick)" ]
+			then 
+				
+				eval $tick=0
+				list+=($tick)
+			fi
+			if [ ${#price} -ge ${#max} ];
+			then
+				max=$price
+			fi
+			eval $tick[0]=$price
+		fi	
+	done
+	for i in ${list[*]}
+	do
+		printf  "%-10s%s %${#max}s\n" "$i" ":"  "$(eval echo '$'$i)"
+	done
+}
+
+
+#first cycle of this function create ticker list, sum value and save last price
+#second cycle of this function calculates profit for each ticker and find out bigest prof in absolute value
+#tird cycle write out graph for eaach ticker 
+function graph(){
+while read date tick type price curr vol ID
+do
+	if [ "$ID" != "" ]
+	then
+		if [ -z "$(eval echo '$'$tick)" ]
+		then 
+			eval $tick=0
+			list+=($tick)
+		fi
+		if [ "$type" = "buy" ];then
+			eval $tick=`echo "a=$(eval echo '${'$tick'[0]}');b=$vol;a+b" | bc`	
+		else 
+			eval $tick=`echo "a=$(eval echo '${'$tick'[0]}');b=$vol;a-b" | bc` 
+		fi
+
+		eval $tick[1]=$price
+	fi	
+done
+min=0
+int_min=0
+for i in ${list[*]}
+do
+	
+	eval $i=`echo "a=$(eval echo '${'$i'[0]}');b=$(eval echo '${'$i'[1]}');a*b" | bc`
+	ticker=$(eval echo '$'$i)
+	if [ ${ticker%.*} -gt ${max%.*} ]
+	then
+		max="$(eval echo '$'$i)"
+	fi
+	
+	if [ ${ticker%.*} -lt ${min%.*} ]
+	then
+		min="$(eval echo '$'$i)"
+		(( int_min=${min%.*}*-1))
+	fi
+	
+	if [ $int_min -gt ${max%.*} ]
+	then
+		max=$int_min.${x#*.}
+	fi
+done	
+
+if [ -n "$width" ]
+then
+	unit=`echo "a=$max;b=$width;a/b" | bc`
+else
+	unit=1000
+fi
+
+
+
+for i in ${list[*]}
+do
+	if [[ $(eval echo '$'$i) = *-* ]]
+	then
+		units=`echo "a=$(eval echo '${'$i'[0]}');b=$unit;a/b*-1" | bc`
+		char="!"
+	else
+		char="#"
+		units=`echo "a=$(eval echo '${'$i'[0]}');b=$unit;a/b" | bc`
+	fi
+	printf  "%-10s%s " "$i" ":"
+	while [ $units -gt 0 ]
+	do
+		echo -n $char
+		(( units-- ))
+	done
+	echo
+done	
+}
+
+#funtion remember the number of occurences of ticker in first cyle in log file 
+#function in second cycle write out graph for each ticker
+function hist(){
+while read date tick type price curr vol ID
+do
+	if [ "$ID" != "" ]
+	then
+		if [ -z "$(eval echo '$'$tick)" ]
+		then 
+			eval $tick=0
+			list+=($tick)
+		fi
+			eval $tick=`echo "a=$(eval echo '${'$tick'[0]}');a+1" | bc`	 
+	fi	
+done
+for i in ${list[*]}
+do	
+	printf  "%-10s%s " "$i" ":"
+	while [ $(eval echo '$'$i) -gt 0 ]
+	do	
+		echo -n "#"
+		eval $i=`echo "a=$(eval echo '${'$i'[0]}');a-1" | bc`	 
+		
+	done
+	echo
+done
+}
+
+if [ -n "$gz" ]
+then
+	eval $gz | eval ${arguments[*]} | eval $cmd
+else
+	eval  ${arguments[*]} | eval $cmd
+fi
+
+
+
